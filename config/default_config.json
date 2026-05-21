@@ -1,0 +1,21 @@
+{
+  "backup": {
+    "source_directories": [],
+    "destination_path": "",
+    "file_extensions": ["*"],
+    "exclude_patterns": ["*.tmp", "*.temp", "~*"],
+    "max_file_size_mb": 100,
+    "verify_after_copy": true
+  },
+  "monitoring": {
+    "check_interval_seconds": 5,
+    "auto_confirm": false,
+    "notify_on_backup": true
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "backup.log",
+    "max_size_mb": 10,
+    "backup_count": 5
+  }
+}
