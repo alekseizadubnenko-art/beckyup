@@ -54,6 +54,9 @@ class ConfigManager:
             "backup": {
                 "source_directories": [],
                 "destination_path": "",
+                "known_drive_uuids": {},
+                "auth_mode": "none",
+                "auth_hash": "",
                 "file_extensions": ["*"],
                 "exclude_patterns": ["*.tmp", "*.temp", "~*"],
                 "max_file_size_mb": 100,
@@ -142,3 +145,37 @@ class ConfigManager:
     def set_auto_confirm(self, auto_confirm: bool):
         """Установить флаг автоматического подтверждения бэкапа"""
         self.set('monitoring.auto_confirm', auto_confirm)
+
+    def get_known_uuids(self) -> dict[str, str]:
+        """Get dict of {uuid: label} for known backup drives."""
+        return self.get('backup.known_drive_uuids', {})
+
+    def add_known_uuid(self, uuid: str, label: str):
+        """Register a drive as known backup destination."""
+        uuids = self.get_known_uuids()
+        uuids[uuid] = label
+        self.set('backup.known_drive_uuids', uuids)
+        self.save_config()
+
+    def remove_known_uuid(self, uuid: str):
+        """Unregister a drive from known backup destinations."""
+        uuids = self.get_known_uuids()
+        uuids.pop(uuid, None)
+        self.set('backup.known_drive_uuids', uuids)
+        self.save_config()
+
+    def get_auth_mode(self) -> str:
+        """Get auth mode: none | system | custom"""
+        return self.get('backup.auth_mode', 'none')
+
+    def set_auth_mode(self, mode: str):
+        self.set('backup.auth_mode', mode)
+        self.save_config()
+
+    def get_auth_hash(self) -> str:
+        """Get stored bcrypt hash for custom password mode."""
+        return self.get('backup.auth_hash', '')
+
+    def set_auth_hash(self, auth_hash: str):
+        self.set('backup.auth_hash', auth_hash)
+        self.save_config()

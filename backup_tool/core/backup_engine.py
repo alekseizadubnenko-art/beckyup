@@ -197,6 +197,40 @@ class BackupEngine:
         except OSError:
             return False
 
+    def _check_disk_space(self, destination: Path, source_paths: list[Path]) -> tuple[bool, str]:
+        """Проверка, достаточно ли места на диске назначения"""
+        try:
+            _, _, free_bytes = shutil.disk_usage(destination)
+            total_needed = 0
+            for src in source_paths:
+                if src.is_dir():
+                    for root, dirs, files in os.walk(src):
+                        for f in files:
+                            try:
+                                total_needed += (Path(root) / f).stat().st_size
+                            except OSError:
+                                continue
+                else:
+                    total_needed += src.stat().st_size
+            free_mb = free_bytes / (1024 * 1024)
+            needed_mb = total_needed / (1024 * 1024)
+            if needed_mb > free_mb:
+                return False, f"На диске осталось {free_mb:.0f} МБ, нужно {needed_mb:.0f} МБ"
+            return True, ""
+        except OSError as e:
+            return False, f"Не удалось проверить место на диске: {e}"
+
+    def _check_writeable(self, destination: Path) -> tuple[bool, str]:
+        """Проверка, доступен ли диск для записи"""
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+            test_file = destination / ".beckyup_healthcheck"
+            test_file.write_text("ok")
+            test_file.unlink()
+            return True, ""
+        except OSError as e:
+            return False, f"Диск {destination} не доступен для записи: {e}"
+
     def run_backup(self) -> Dict[str, Any]:
         """Выполнение полного бэкапа всех настроенных директорий"""
         if not self.source_directories:
@@ -204,9 +238,21 @@ class BackupEngine:
             return {"error": "No source directories configured"}
 
         # Проверяем, что destination_path установлен (не равен Path() по умолчанию)
-        if not self.destination_path or self.destination_path == Path() or not self.destination_path.exists():
-            self.logger.error(f"Директория назначения не существует или не установлена: {self.destination_path}")
-            return {"error": "Destination directory does not exist or not set"}
+        if not self.destination_path or self.destination_path == Path():
+            self.logger.error(f"Директория назначения не установлена: {self.destination_path}")
+            return {"error": "Destination directory not set"}
+
+        # Check if destination is writeable
+        ok, msg = self._check_writeable(self.destination_path)
+        if not ok:
+            self.logger.error(msg)
+            return {"error": msg}
+
+        # Check if destination has enough space
+        ok, msg = self._check_disk_space(self.destination_path, self.source_directories)
+        if not ok:
+            self.logger.error(msg)
+            return {"error": msg}
 
         overall_stats = {
             "total_copied": 0,

@@ -5,13 +5,14 @@
 """
 
 import sys
-import logging
 import signal
 import argparse
+from pathlib import Path
 from core.backup_engine import BackupEngine
 from core.device_monitor import DeviceMonitor
 from config.manager import ConfigManager
 from utils.logger import setup_logger
+from utils.ui import show_banner, show_startup, show_backup_result, print_error, console
 
 # Глобальные переменные для корректного завершения
 backup_engine = None
@@ -20,7 +21,7 @@ config_manager = None
 
 def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения"""
-    print("\nПолучен сигнал завершения. Останавливаем приложение...")
+    print_error("\nПолучен сигнал завершения.")
     shutdown()
     sys.exit(0)
 
@@ -29,7 +30,7 @@ def shutdown():
     global device_monitor
     if device_monitor:
         device_monitor.stop_monitoring()
-    print("Приложение остановлено.")
+    console.print("[dim]Приложение остановлено.[/dim]")
 
 def main():
     """Главная функция приложения"""
@@ -44,6 +45,7 @@ def main():
     parser.add_argument("--source", help="Исходная директория для одноразового бэкапа")
     parser.add_argument("--destination", help="Директория назначения для одноразового бэкапа")
     parser.add_argument("--config", help="Путь к файлу конфигурации", default=None)
+    parser.add_argument("--wizard", action="store_true", help="Запустить настройку заново")
     args = parser.parse_args()
 
     # Настройка логирования
@@ -54,49 +56,52 @@ def main():
         # Если указаны source и destination, выполняем одноразовый бэкап
         if args.source and args.destination:
             logger.info("Запуск одноразового бэкапа")
-            # Инициализация движка бэкапа
+            show_banner()
             backup_engine = BackupEngine(args.config)
-            # Переопределяем источник и назначение из аргументов командной строки
-            backup_engine.source_directories = [args.source]
-            backup_engine.destination_path = args.destination
-            # Запускаем бэкап
+            dest = Path(args.destination)
+            dest.mkdir(parents=True, exist_ok=True)
+            backup_engine.source_directories = [Path(args.source)]
+            backup_engine.destination_path = dest
             stats = backup_engine.run_backup()
-            print("Одноразовый бэкап завершен:")
-            print(f"  Источник: {args.source}")
-            print(f"  Назначение: {args.destination}")
-            print(f"  Скопировано файлов: {stats.get('total_copied', 0)}")
-            print(f"  Пропущено файлов: {stats.get('total_skipped', 0)}")
-            print(f"  Ошибок: {stats.get('total_errors', 0)}")
+            console.print(f"[bold]Источник:[/bold] {args.source}")
+            console.print(f"[bold]Назначение:[/bold] {args.destination}")
+            show_backup_result(stats)
             logger.info(f"Одноразовый бэкап завершен: {stats}")
             return
 
-        # Иначе запускаем в режиме мониторинга устройств
-        # Инициализация менеджера конфигурации
+        # Инициализация конфигурации для режима мониторинга
         config_manager = ConfigManager()
-        logger.info("Менеджер конфигурации инициализирован")
 
-        # Инициализация компонентов
+        # Запуск визарда при первом запуске или по флагу --wizard
+        if args.wizard or not config_manager.config_file.exists():
+            try:
+                from cli.wizard import run_wizard
+                backup_engine = BackupEngine(args.config)
+                run_wizard(config_manager, backup_engine)
+            except ImportError:
+                logger.error("questionary не установлен. Выполни: pip install -r requirements.txt")
+                sys.exit(1)
+            if args.wizard:
+                return
+
+        # Режим мониторинга устройств
+        logger.info("Запуск в режиме мониторинга")
         backup_engine = BackupEngine(args.config)
-        device_monitor = DeviceMonitor(backup_engine)
+        from core.device_detector import DeviceDetector
+        detector = DeviceDetector()
+        device_monitor = DeviceMonitor(backup_engine, detector=detector)
 
-        # Добавляем callback для оповещения о подключении устройств
         def on_device_connected(device_path):
             logger.info(f"Обнаружено новое устройство: {device_path}")
-            # Можно добавить дополнительную логику здесь, например, уведомление пользователя
 
         device_monitor.add_callback(on_device_connected)
-
-        # Запуск мониторинга устройств
         device_monitor.start_monitoring()
 
         logger.info("Приложение запущено и готово к работе")
-        print("Экстренный бэкап запущен. Нажмите Ctrl+C для выхода.")
-        print(f"Конфигурация загружена из: {config_manager.config_file if config_manager else 'default'}")
+        show_startup(str(config_manager.config_file) if config_manager else None)
 
-        # Основной цикл приложения
         try:
             while True:
-                # Можно добавить периодические проверки или просто ждать сигнала
                 import time
                 time.sleep(1)
         except KeyboardInterrupt:
@@ -106,6 +111,7 @@ def main():
 
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}", exc_info=True)
+        print_error(f"Критическая ошибка: {e}")
         shutdown()
         sys.exit(1)
 

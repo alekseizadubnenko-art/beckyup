@@ -4,6 +4,7 @@ import os
 import shutil
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 # Добавляем корневую директорию проекта в путь, чтобы импортировать модули
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -135,7 +136,40 @@ class TestBackupEngine(unittest.TestCase):
 
         result = engine.run_backup()
         self.assertIn("error", result)
-        self.assertEqual(result["error"], "Destination directory does not exist or not set")
+        self.assertEqual(result["error"], "Destination directory not set")
+
+    @patch("shutil.disk_usage")
+    def test_disk_space_insufficient(self, mock_du):
+        engine = BackupEngine()
+        engine.source_directories = [self.source_dir]
+        engine.destination_path = self.dest_dir
+        # Only 1 byte free
+        mock_du.return_value = (0, 0, 1)
+        ok, msg = engine._check_disk_space(self.dest_dir, [self.source_dir / "file1.txt"])
+        self.assertFalse(ok)
+        self.assertIn("нужно", msg)
+
+    @patch("shutil.disk_usage")
+    def test_disk_space_sufficient(self, mock_du):
+        engine = BackupEngine()
+        engine.source_directories = [self.source_dir]
+        engine.destination_path = self.dest_dir
+        # 1 GB free
+        mock_du.return_value = (0, 0, 1024 * 1024 * 1024)
+        ok, msg = engine._check_disk_space(self.dest_dir, [self.source_dir / "file1.txt"])
+        self.assertTrue(ok)
+
+    def test_writeable_check_passes(self):
+        engine = BackupEngine()
+        engine.destination_path = self.dest_dir
+        ok, msg = engine._check_writeable(self.dest_dir)
+        self.assertTrue(ok)
+
+    def test_writeable_check_fails_on_nonexistent(self):
+        engine = BackupEngine()
+        engine.destination_path = Path("/nonexistent")
+        ok, msg = engine._check_writeable(Path("/nonexistent"))
+        self.assertFalse(ok)
 
 if __name__ == '__main__':
     unittest.main()

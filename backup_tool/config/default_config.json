@@ -2,6 +2,9 @@
   "backup": {
     "source_directories": [],
     "destination_path": "",
+    "known_drive_uuids": {},
+    "auth_mode": "none",
+    "auth_hash": "",
     "file_extensions": ["*"],
     "exclude_patterns": ["*.tmp", "*.temp", "~*"],
     "max_file_size_mb": 100,

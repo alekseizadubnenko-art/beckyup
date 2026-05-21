@@ -5,9 +5,10 @@ from typing import List, Callable
 from utils.logger import get_logger
 
 class DeviceMonitor:
-    def __init__(self, backup_engine, check_interval: int = 5):
+    def __init__(self, backup_engine, detector=None, check_interval: int = 5):
         self.logger = get_logger("device_monitor")
         self.backup_engine = backup_engine
+        self.detector = detector
         self.check_interval = check_interval
         self.running = False
         self.monitor_thread = None
@@ -18,56 +19,54 @@ class DeviceMonitor:
         """Добавление callback функции для вызова при обнаружении нового устройства"""
         self.callbacks.append(callback)
 
-    def _get_connected_devices(self) -> set:
-        """
-        Получение списка подключенных внешних устройств
-        Это упрощенная реализация - в реальном приложении потребуется
-        platform-specific код для мониторинга USB устройств
-        """
-        # В реальном приложении здесь должен быть код для:
-        # - Windows: использование WMI или pywin32
-        # - Linux: мониторинг /dev через udev или udisks2
-        # - macOS: использование IOKit или FSEvents
-
-        # Для демонстрации возвращаем пустое множество
-        # В будущих версиях нужно будет реализовать реальное определение устройств
-        return set()
-
     def _check_for_new_devices(self):
-        """Проверка на наличие новых подключенных устройств"""
         try:
-            current_devices = self._get_connected_devices()
-            new_devices = current_devices - self.known_devices
+            current_devices = self.detector.get_mounted_devices()
+            current_uuids = {d[2] for d in current_devices}
+            known_uuids = {d[2] for d in self.known_devices}
+            new_uuids = current_uuids - known_uuids
 
-            if new_devices:
-                self.logger.info(f"Обнаружены новые устройства: {new_devices}")
-                for device in new_devices:
-                    self._on_device_connected(device)
+            for mount_path, label, uuid in current_devices:
+                if uuid in new_uuids:
+                    known_drives = self.backup_engine.config.get("backup", {}).get("known_drive_uuids", {})
+                    if known_drives.get(uuid):
+                        self._on_device_connected(mount_path, label, uuid)
+                    else:
+                        self.logger.info(f"Неизвестное устройство: {label} — игнорируем")
 
-            # Проверяем отсоединенные устройства (опционально)
-            disconnected_devices = self.known_devices - current_devices
-            if disconnected_devices:
-                self.logger.info(f"Устройства отсоединены: {disconnected_devices}")
-                for device in disconnected_devices:
-                    self._on_device_disconnected(device)
-
+            lost_uuids = known_uuids - current_uuids
+            if lost_uuids:
+                self.logger.info(f"Устройства отсоединены: {lost_uuids}")
             self.known_devices = current_devices
-
         except Exception as e:
             self.logger.error(f"Ошибка при проверке устройств: {e}")
 
-    def _on_device_connected(self, device_path: str):
+    def _on_device_connected(self, device_path: str, device_label: str = "", device_uuid: str = ""):
         """Обработчик подключения нового устройства"""
         self.logger.info(f"Устройство подключено: {device_path}")
 
-        # Выполняем бэкап если настроено автоподтверждение
-        if self.backup_engine.config.get("monitoring", {}).get("auto_confirm", False):
-            self.logger.info("Автоматический бэкап запущен...")
-            self.backup_engine.run_backup()
-        else:
-            self.logger.info("Для запуска бэкапа требуется подтверждение пользователя")
+        auth_mode = self.backup_engine.config.get("backup", {}).get("auth_mode", "none")
+        auth_hash = self.backup_engine.config.get("backup", {}).get("auth_hash", "")
+        auto_confirm = self.backup_engine.config.get("monitoring", {}).get("auto_confirm", False)
 
-        # Вызываем зарегистрированные callbacks
+        should_backup = False
+        if auth_mode == "none" and auto_confirm:
+            should_backup = True
+            self.logger.info("Автоматический бэкап запущен...")
+        else:
+            from utils.auth import confirm_backup
+            sources = self.backup_engine.config.get("backup", {}).get("source_directories", [])
+            summary = "; ".join(str(s) for s in sources[:3])
+            if len(sources) > 3:
+                summary += f" и ещё {len(sources) - 3}"
+            confirmed = confirm_backup(device_label or device_path, summary or "—", auth_mode, auth_hash)
+            if confirmed:
+                should_backup = True
+                self.logger.info("Бэкап подтверждён пользователем")
+
+        if should_backup:
+            self.backup_engine.run_backup()
+
         for callback in self.callbacks:
             try:
                 callback(device_path)
