@@ -32,14 +32,21 @@
 ```bash
 git clone https://github.com/alekseizadubnenko-art/beckyup.git
 cd beckyup
-./install.sh           # авто: deps + alias + инструкция
+./install.sh           # deps + alias beckyup → ~/.zshrc + инструкция
 ```
 
-Или вручную:
+После `install.sh` открой новую вкладку терминала и просто:
+
+```bash
+beckyup
+```
+
+Или вручную (без alias):
 
 ```bash
 cd beckyup/backup_tool
 uv sync                # или pip install -r requirements.txt
+uv run python main.py
 ```
 
 ## Quickstart
