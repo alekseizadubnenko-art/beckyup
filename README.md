@@ -30,9 +30,16 @@
 ## Install
 
 ```bash
-git clone <url>
+git clone https://github.com/alekseizadubnenko-art/beckyup.git
+cd beckyup
+./install.sh           # авто: deps + alias + инструкция
+```
+
+Или вручную:
+
+```bash
 cd beckyup/backup_tool
-uv sync          # или pip install -r requirements.txt
+uv sync                # или pip install -r requirements.txt
 ```
 
 ## Quickstart
