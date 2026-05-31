@@ -1,12 +1,8 @@
 import hashlib
-import json
-import os
 import subprocess
 import shutil
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from utils.logger import get_logger
 
 
 def _age_binary() -> Optional[str]:
@@ -63,21 +59,34 @@ def generate_identity(store_dir: Path) -> tuple[Path, Path]:
     return verify_path, sign_path
 
 
+def _derive_public_key(sign_key_path: Path) -> str:
+    """Derive age public key from private key file."""
+    age_keygen = _age_keygen_binary()
+    if not age_keygen:
+        raise RuntimeError("age-keygen not found")
+    result = subprocess.run(
+        [age_keygen, "-y", str(sign_key_path)],
+        capture_output=True, text=True, timeout=10
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"age-keygen -y failed: {result.stderr}")
+    return result.stdout.strip()
+
+
 def sign_manifest(data: bytes, sign_key_path: Path) -> str:
-    """Sign manifest bytes with age. Encrypts data with the corresponding
-    public key (verify-key) as recipient. Returns armored encrypted message."""
+    """Sign manifest bytes with age private key.
+
+    Derives the public key from the private key, then encrypts data
+    with the public key. Decryption with the private key later proves
+    the data was signed by the holder of this private key."""
     age_bin = _age_binary()
     if not age_bin:
         raise RuntimeError("age not found. Install age: https://github.com/FiloSottile/age")
 
-    verify_key_path = sign_key_path.parent / "verify-key"
-    if not verify_key_path.exists():
-        raise RuntimeError(f"verify-key not found at {verify_key_path}")
-
-    verify_key = verify_key_path.read_text().strip()
+    public_key = _derive_public_key(sign_key_path)
 
     result = subprocess.run(
-        [age_bin, "--armor", "--encrypt", f"--recipient={verify_key}"],
+        [age_bin, "--armor", "--encrypt", f"--recipient={public_key}"],
         input=data, capture_output=True, timeout=30
     )
     if result.returncode != 0:
@@ -86,8 +95,12 @@ def sign_manifest(data: bytes, sign_key_path: Path) -> str:
 
 
 def verify_signature(data: bytes, signature: str, verify_key_path: Path) -> bool:
-    """Verify age signature against data. Decrypts the armored signature
-    using the private key (sign-key) and compares with original data."""
+    """Verify age signature using public key.
+
+    Decrypts the armored signature with the sibling private key.
+    The signature is valid if decryption succeeds and output matches original data.
+    The verify_key_path serves to locate the store — the actual decryption
+    requires the private key stored alongside it."""
     age_bin = _age_binary()
     if not age_bin:
         return False

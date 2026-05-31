@@ -49,5 +49,38 @@ class TestSnapshotIdentity(unittest.TestCase):
         sig = sign_manifest(data, sign_key)
         self.assertFalse(verify_signature(b'{"test": "EVIL"}', sig, verify_key))
 
+class TestSHA256(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir)
+
+    def test_sha256_file_known_value(self):
+        from core.snapshot import sha256_file
+        f = self.test_dir / "test.bin"
+        f.write_bytes(b"hello")
+        # sha256 of "hello"
+        self.assertEqual(sha256_file(f),
+                         "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+
+    def test_sha256_bytes_known_value(self):
+        from core.snapshot import sha256_bytes
+        self.assertEqual(sha256_bytes(b"hello"),
+                         "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+
+    def test_sha256_file_empty(self):
+        from core.snapshot import sha256_file
+        f = self.test_dir / "empty.bin"
+        f.write_text("")
+        self.assertEqual(sha256_file(f),
+                         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+
+    def test_sha256_bytes_empty(self):
+        from core.snapshot import sha256_bytes
+        self.assertEqual(sha256_bytes(b""),
+                         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+
+
 if __name__ == '__main__':
     unittest.main()
