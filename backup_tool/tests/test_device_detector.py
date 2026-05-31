@@ -1,6 +1,7 @@
 import unittest
 import os
 import sys
+import json
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
@@ -87,3 +88,72 @@ class TestDeviceDetector(unittest.TestCase):
         detector = DeviceDetector()
         result = detector.get_mounted_devices()
         self.assertIsInstance(result, set)
+
+    @patch("core.device_detector.os.getenv")
+    @patch("core.device_detector.subprocess.run")
+    def test_linux_parses_lsblk_json(self, mock_run, mock_getenv):
+        mock_getenv.return_value = "user"
+        fake_json = json.dumps({
+            "blockdevices": [
+                {
+                    "name": "sdb1",
+                    "mountpoint": "/media/user/BACKUP",
+                    "label": "BACKUP",
+                    "uuid": "ABC-123-DEF",
+                    "children": []
+                }
+            ]
+        })
+        mock_run.return_value.stdout = fake_json
+        mock_run.return_value.returncode = 0
+
+        detector = DeviceDetector()
+        devices = detector._get_linux_devices()
+        self.assertIn(
+            ("/media/user/BACKUP", "BACKUP", "ABC-123-DEF"),
+            devices,
+        )
+
+    @patch("core.device_detector.os.getenv")
+    @patch("core.device_detector.subprocess.run")
+    def test_linux_skips_system_mounts(self, mock_run, mock_getenv):
+        mock_getenv.return_value = "user"
+        fake_json = json.dumps({
+            "blockdevices": [
+                {"name": "sda1", "mountpoint": "/", "label": "", "uuid": "root-uuid"},
+                {"name": "sdb1", "mountpoint": "/media/user/USB", "label": "USB", "uuid": "USB-123"}
+            ]
+        })
+        mock_run.return_value.stdout = fake_json
+        mock_run.return_value.returncode = 0
+
+        detector = DeviceDetector()
+        devices = detector._get_linux_devices()
+        self.assertNotIn(("/", "", "root-uuid"), devices)
+        self.assertIn(("/media/user/USB", "USB", "USB-123"), devices)
+
+    @patch("core.device_detector.os.getenv")
+    @patch("core.device_detector.subprocess.run")
+    def test_linux_filters_user_mounts(self, mock_run, mock_getenv):
+        mock_getenv.return_value = "user"
+        fake_json = json.dumps({
+            "blockdevices": [
+                {"name": "sdc1", "mountpoint": "/mnt/data", "label": "Data", "uuid": "DATA-456"}
+            ]
+        })
+        mock_run.return_value.stdout = fake_json
+        mock_run.return_value.returncode = 0
+
+        detector = DeviceDetector()
+        devices = detector._get_linux_devices()
+        self.assertIn(("/mnt/data", "Data", "DATA-456"), devices)
+
+    def test_linux_handles_missing_lsblk(self):
+        detector = DeviceDetector()
+        devices = detector._get_linux_devices()
+        self.assertEqual(devices, set())
+
+    def test_windows_ctypes_not_available_returns_empty(self):
+        detector = DeviceDetector()
+        devices = detector._get_windows_devices()
+        self.assertIsInstance(devices, set)

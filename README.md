@@ -25,17 +25,27 @@
 
 - Python 3.12+
 - `uv` (рекомендуется) или `pip`
-- macOS (MVP; Linux/Windows в разработке)
+- **macOS** — полноценная поддержка (основная платформа)
+- **Linux** — поддержка (детектор через `lsblk`, автозапуск через `systemd`)
+- **Windows** — поддержка (детектор через `ctypes` WinAPI, автозапуск через реестр)
 
 ## Install
 
+### macOS / Linux
 ```bash
 git clone https://github.com/alekseizadubnenko-art/beckyup.git
 cd beckyup
-./install.sh           # deps + alias beckyup → ~/.zshrc + инструкция
+./install.sh           # deps + alias beckyup → shell rc + инструкция
 ```
 
-После `install.sh` открой новую вкладку терминала и просто:
+### Windows (PowerShell)
+```powershell
+git clone https://github.com/alekseizadubnenko-art/beckyup.git
+cd beckyup
+.\install.ps1          # deps + alias beckyup → PowerShell profile
+```
+
+После установки открой новый терминал и просто:
 
 ```bash
 beckyup
@@ -77,7 +87,10 @@ uv run python main.py --help                    # справка
 
 ## Как это работает
 
-1. `device_detector` polling `/Volumes/` раз в 5 секунд
+1. `device_detector` polling точек монтирования раз в 5 секунд:
+   - **macOS:** `/Volumes/` + `diskutil info` → UUID
+   - **Linux:** `lsblk -J` → фильтр `/media/`, `/mnt/`, `/run/media/`
+   - **Windows:** `ctypes` WinAPI → `GetLogicalDrives` + `GetVolumeInformation`
 2. Появился новый UUID → проверка в whitelist
 3. Если флешка знакомая → подтверждение (если настроено) → `backup_engine`
 4. `backup_engine` проверяет место на диске, доступность записи, копирует через `shutil.copy2`
@@ -85,12 +98,12 @@ uv run python main.py --help                    # справка
 
 ## Безопасность
 
-| Режим | Что происходит |
-|---|---|
-| `none` + авто | Бэкап без вопросов |
-| `none` | macOS-диалог "Начинаем?" |
-| `system` | Запрос системного пароля macOS |
-| `custom` | Ввод bcrypt-пароля через диалог |
+| Режим | macOS | Linux | Windows |
+|---|---|---|---|
+| `none` + авто | Бэкап без вопросов | Бэкап без вопросов | Бэкап без вопросов |
+| `none` | osascript-диалог | zenity/kdialog/терминал | PowerShell/терминал |
+| `system` | Системный пароль macOS | `pkexec` / `sudo` | UAC через PowerShell |
+| `custom` | bcrypt-пароль | bcrypt-пароль | bcrypt-пароль |
 
 ## Tests
 
@@ -106,18 +119,20 @@ backup_tool/
 ├── cli/wizard.py              # Setup wizard (questionary)
 ├── core/
 │   ├── backup_engine.py       # Copy engine + safety checks
-│   ├── device_detector.py     # USB polling (macOS)
+│   ├── device_detector.py     # USB polling (macOS/Linux/Windows)
 │   └── device_monitor.py      # Thread loop + whitelist
 ├── config/
 │   ├── manager.py             # JSON config CRUD
 │   └── default_config.json    # Defaults
 ├── utils/
-│   ├── auth.py                # osascript dialogs + bcrypt
-│   ├── launchagent.py         # macOS autostart
+│   ├── auth.py                # Cross-platform auth dialogs
+│   ├── launchagent.py         # Autostart (macOS/Linux/Windows)
 │   ├── ui.py                  # Rich output + fallback
 │   ├── logger.py              # File + console logging
 │   └── platform.py            # OS detection
-└── tests/                     # 19 unit tests
+├── tests/                     # 24+ unit tests
+├── install.sh                 # macOS/Linux installer
+└── install.ps1                # Windows installer
 ```
 
 ## Contributing
@@ -130,8 +145,7 @@ PRs welcome.
 - UI на русском, код на английском
 
 **Что можно улучшить:**
-- Linux/Windows детектор (сейчас stubs)
-- Native USB-события (pyobjc, pyudev, pywin32)
+- Native USB-события (pyobjc, pyudev, pywin32) — вместо polling
 - GUI / tray-иконка
 - Инкрементальные бэкапы
 - Шифрование
