@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beckyup"
+version = "0.2.0"
+description = "Экстренный бэкап важных данных"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Alex Brock", email = "alexbrock@pm.me"},
+]
+
+[project.scripts]
+beckyup = "main:main"

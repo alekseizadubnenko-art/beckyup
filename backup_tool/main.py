@@ -15,6 +15,11 @@ from config.manager import ConfigManager
 from utils.logger import setup_logger
 from utils.ui import show_banner, show_startup, show_backup_result, print_error, console
 
+try:
+    from __init__ import __version__
+except ImportError:
+    __version__ = "0.0.0"
+
 
 backup_engine = None
 device_monitor = None
@@ -192,7 +197,12 @@ def main():
     parser.add_argument("--restore", action="store_true", help="Восстановить из снепшота")
     parser.add_argument("--diff", action="store_true", help="Сравнить два снепшота")
     parser.add_argument("--verify", action="store_true", help="Проверить целостность снепшота")
+    parser.add_argument("--version", action="store_true", help="Показать версию")
     args = parser.parse_args()
+
+    if args.version:
+        console.print(f"beckyup v{__version__}")
+        return
 
     logger = setup_logger()
     logger.info("Запуск экстренного бэкапа важных данных")
