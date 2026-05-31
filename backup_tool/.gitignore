@@ -72,3 +72,11 @@ Thumbs.db
 
 # My config
 config/config.json
+
+# Agent / session context (private)
+CONTEXT.md
+AGENTS.md
+CLAUDES.md
+*.original.md
+/plan.md
+/todo.md
