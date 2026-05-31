@@ -82,5 +82,107 @@ class TestSHA256(unittest.TestCase):
                          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 
 
+class TestSnapshotManager(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.store = self.test_dir / ".beckyup"
+        self.store.mkdir(parents=True, exist_ok=True)
+        self.blobs = self.store / "blobs"
+        self.blobs.mkdir()
+        self.snapshots = self.store / "snapshots"
+        self.snapshots.mkdir()
+        self.src = self.test_dir / "source"
+        self.src.mkdir()
+        (self.src / "file1.txt").write_text("hello")
+        (self.src / "file2.txt").write_text("world")
+        (self.src / "sub").mkdir()
+        (self.src / "sub" / "file3.txt").write_text("nested")
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir)
+
+    def test_scan_files_returns_relative_paths(self):
+        from core.snapshot import SnapshotManager
+        mgr = SnapshotManager(self.store)
+        files = mgr.scan_files(self.src)
+        paths = {f["rel"] for f in files}
+        self.assertIn("file1.txt", paths)
+        self.assertIn("file2.txt", paths)
+        self.assertIn("sub/file3.txt", paths)
+
+    def test_scan_files_includes_hash_and_size(self):
+        from core.snapshot import SnapshotManager
+        mgr = SnapshotManager(self.store)
+        files = mgr.scan_files(self.src)
+        f1 = next(f for f in files if f["rel"] == "file1.txt")
+        self.assertEqual(f1["size"], 5)
+        self.assertEqual(len(f1["sha256"]), 64)
+
+    def test_dedup_copy_copies_new_blob(self):
+        from core.snapshot import SnapshotManager
+        mgr = SnapshotManager(self.store)
+        src_file = self.src / "file1.txt"
+        blob_hash = mgr.dedup_copy(src_file, self.blobs)
+        blob_path = self.blobs / blob_hash
+        self.assertTrue(blob_path.exists())
+        self.assertEqual(blob_path.read_text(), "hello")
+
+    def test_dedup_copy_skips_existing_blob(self):
+        from core.snapshot import SnapshotManager
+        mgr = SnapshotManager(self.store)
+        src_file = self.src / "file1.txt"
+        hash1 = mgr.dedup_copy(src_file, self.blobs)
+        hash2 = mgr.dedup_copy(src_file, self.blobs)
+        self.assertEqual(hash1, hash2)
+        blob_count = len(list(self.blobs.iterdir()))
+        self.assertEqual(blob_count, 1)
+
+    def test_write_manifest_creates_json(self):
+        from core.snapshot import SnapshotManager
+        mgr = SnapshotManager(self.store)
+        files = mgr.scan_files(self.src)
+        from core.snapshot import generate_identity
+        generate_identity(self.store)
+        manifest_path = mgr.write_manifest(
+            self.snapshots, files, [str(self.src)],
+            self.store / "sign-key"
+        )
+        self.assertTrue(manifest_path.exists())
+        self.assertTrue(Path(str(manifest_path) + ".sig").exists())
+
+    def test_load_manifest(self):
+        from core.snapshot import SnapshotManager
+        mgr = SnapshotManager(self.store)
+        files = mgr.scan_files(self.src)
+        f1 = next(f for f in files if f["rel"] == "file1.txt")
+        from core.snapshot import generate_identity
+        generate_identity(self.store)
+        manifest_path = mgr.write_manifest(
+            self.snapshots, files, [str(self.src)],
+            self.store / "sign-key"
+        )
+        loaded = mgr.load_manifest(manifest_path)
+        self.assertIn("file1.txt", loaded["files"])
+        self.assertEqual(loaded["files"]["file1.txt"]["sha256"], f1["sha256"])
+
+    def test_list_snapshots(self):
+        from core.snapshot import SnapshotManager
+        mgr = SnapshotManager(self.store)
+        files = mgr.scan_files(self.src)
+        from core.snapshot import generate_identity
+        generate_identity(self.store)
+        mgr.write_manifest(self.snapshots, files, [str(self.src)],
+                          self.store / "sign-key")
+        snaps = mgr.list_snapshots()
+        self.assertEqual(len(snaps), 1)
+        self.assertIn("created_at", snaps[0])
+
+    def test_list_snapshots_returns_empty_list(self):
+        from core.snapshot import SnapshotManager
+        mgr = SnapshotManager(self.store)
+        snaps = mgr.list_snapshots()
+        self.assertEqual(snaps, [])
+
+
 if __name__ == '__main__':
     unittest.main()

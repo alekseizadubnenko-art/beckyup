@@ -1,8 +1,13 @@
 import hashlib
+import json
+import os
 import subprocess
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from utils.logger import get_logger
 
 _CHUNK_SIZE = 65536
 
@@ -123,3 +128,90 @@ def sha256_file(path: Path) -> str:
 def sha256_bytes(data: bytes) -> str:
     """Compute SHA-256 hex digest of bytes."""
     return hashlib.sha256(data).hexdigest()
+
+
+class SnapshotManager:
+    def __init__(self, store_dir: Path):
+        self.store_dir = store_dir
+        self.blobs_dir = store_dir / "blobs"
+        self.snapshots_dir = store_dir / "snapshots"
+        self.logger = get_logger("snapshot")
+
+    def scan_files(self, source_dir: Path) -> list[dict]:
+        """Scan directory recursively. Returns list of {rel, path, sha256, size, mtime}."""
+        results = []
+        for root, dirs, files in os.walk(source_dir):
+            root_path = Path(root)
+            for name in files:
+                full = root_path / name
+                rel = str(full.relative_to(source_dir))
+                results.append({
+                    "rel": rel,
+                    "path": full,
+                    "sha256": sha256_file(full),
+                    "size": full.stat().st_size,
+                    "mtime": datetime.fromtimestamp(
+                        full.stat().st_mtime, tz=timezone.utc
+                    ).isoformat(),
+                })
+        return results
+
+    def dedup_copy(self, src_path: Path, blobs_dir: Path) -> str:
+        """Copy file to blobs_dir if not already there. Returns sha256 hex."""
+        h = sha256_file(src_path)
+        dest = blobs_dir / h
+        if not dest.exists():
+            shutil.copy2(src_path, dest)
+        return h
+
+    def write_manifest(self, snapshots_dir: Path, files: list[dict],
+                       source_paths: list[str], sign_key_path: Path) -> Path:
+        """Write snapshot manifest JSON + signature. Returns manifest path."""
+        manifest = {
+            "version": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_paths": source_paths,
+            "files": {},
+        }
+        for f in files:
+            manifest["files"][f["rel"]] = {
+                "sha256": f["sha256"],
+                "size": f["size"],
+                "mtime_source": f["mtime"],
+            }
+
+        manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
+        sig = sign_manifest(manifest_bytes, sign_key_path)
+
+        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        manifest_path = snapshots_dir / f"{ts}.json"
+        manifest_path.write_bytes(manifest_bytes)
+        Path(str(manifest_path) + ".sig").write_text(sig + "\n")
+        return manifest_path
+
+    def load_manifest(self, manifest_path: Path) -> dict:
+        """Load and return manifest dict."""
+        return json.loads(manifest_path.read_bytes())
+
+    def list_snapshots(self) -> list[dict]:
+        """List all snapshots in store. Returns list of {id, path, created_at, file_count, total_size}."""
+        if not self.snapshots_dir.exists():
+            return []
+        snaps = []
+        for p in sorted(self.snapshots_dir.glob("*.json")):
+            if p.name.endswith(".sig"):
+                continue
+            try:
+                m = self.load_manifest(p)
+                file_count = len(m.get("files", {}))
+                total_size = sum(f["size"] for f in m["files"].values())
+                snaps.append({
+                    "id": p.stem,
+                    "path": p,
+                    "created_at": m.get("created_at", ""),
+                    "file_count": file_count,
+                    "total_size": total_size,
+                })
+            except (json.JSONDecodeError, KeyError):
+                continue
+        return snaps
