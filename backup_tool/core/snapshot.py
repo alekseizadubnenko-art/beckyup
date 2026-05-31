@@ -183,7 +183,7 @@ class SnapshotManager:
         manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
         sig = sign_manifest(manifest_bytes, sign_key_path)
 
-        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
         manifest_path = snapshots_dir / f"{ts}.json"
         manifest_path.write_bytes(manifest_bytes)
         Path(str(manifest_path) + ".sig").write_text(sig + "\n")
@@ -215,3 +215,45 @@ class SnapshotManager:
             except (json.JSONDecodeError, KeyError):
                 continue
         return snaps
+
+    def diff(self, manifest_a: dict, manifest_b: dict) -> dict:
+        """Compare two manifests. Returns {added, modified, deleted} sets."""
+        files_a = set(manifest_a.get("files", {}).keys())
+        files_b = set(manifest_b.get("files", {}).keys())
+        added = files_b - files_a
+        deleted = files_a - files_b
+        common = files_a & files_b
+        modified = set()
+        for name in common:
+            if (manifest_a["files"][name]["sha256"]
+                    != manifest_b["files"][name]["sha256"]):
+                modified.add(name)
+        return {"added": added, "modified": modified, "deleted": deleted}
+
+    def restore(self, manifest: dict, blobs_dir: Path, destination: Path):
+        """Restore snapshot manifest to destination directory."""
+        for rel, meta in manifest.get("files", {}).items():
+            blob_path = blobs_dir / meta["sha256"]
+            dest_path = destination / rel
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            if blob_path.exists():
+                shutil.copy2(blob_path, dest_path)
+            else:
+                self.logger.error(f"Blob not found: {meta['sha256']} for {rel}")
+
+    def verify(self, manifest: dict, blobs_dir: Path,
+               verify_key_path: Optional[Path] = None) -> dict:
+        """Verify all blobs in manifest exist and match sha256.
+        Returns {valid, errors, checked}."""
+        errors = []
+        checked = 0
+        for rel, meta in manifest.get("files", {}).items():
+            blob_path = blobs_dir / meta["sha256"]
+            if not blob_path.exists():
+                errors.append(f"{rel}: blob missing")
+                continue
+            actual = sha256_file(blob_path)
+            if actual != meta["sha256"]:
+                errors.append(f"{rel}: hash mismatch")
+            checked += 1
+        return {"valid": len(errors) == 0, "errors": errors, "checked": checked}

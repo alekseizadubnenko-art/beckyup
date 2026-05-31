@@ -184,5 +184,84 @@ class TestSnapshotManager(unittest.TestCase):
         self.assertEqual(snaps, [])
 
 
+class TestSnapshotRestoreDiffVerify(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.store = self.test_dir / ".beckyup"
+        self.store.mkdir(parents=True)
+        (self.store / "blobs").mkdir()
+        (self.store / "snapshots").mkdir()
+        self.src = self.test_dir / "source"
+        self.src.mkdir()
+        (self.src / "a.txt").write_text("alpha")
+        (self.src / "b.txt").write_text("beta")
+        from core.snapshot import SnapshotManager, generate_identity
+        self.mgr = SnapshotManager(self.store)
+        generate_identity(self.store)
+        files = self.mgr.scan_files(self.src)
+        for f in files:
+            self.mgr.dedup_copy(f["path"], self.store / "blobs")
+        self.manifest1 = self.mgr.write_manifest(
+            self.store / "snapshots", files, [str(self.src)],
+            self.store / "sign-key"
+        )
+        (self.src / "a.txt").write_text("alpha_v2")
+        (self.src / "c.txt").write_text("charlie")
+        os.unlink(self.src / "b.txt")
+        files2 = self.mgr.scan_files(self.src)
+        for f in files2:
+            self.mgr.dedup_copy(f["path"], self.store / "blobs")
+        self.manifest2 = self.mgr.write_manifest(
+            self.store / "snapshots", files2, [str(self.src)],
+            self.store / "sign-key"
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir)
+
+    def test_diff_added_modified_deleted(self):
+        m1 = self.mgr.load_manifest(self.manifest1)
+        m2 = self.mgr.load_manifest(self.manifest2)
+        result = self.mgr.diff(m1, m2)
+        self.assertIn("added", result)
+        self.assertIn("modified", result)
+        self.assertIn("deleted", result)
+        self.assertEqual(result["added"], {"c.txt"})
+        self.assertEqual(result["deleted"], {"b.txt"})
+        self.assertEqual(result["modified"], {"a.txt"})
+
+    def test_diff_identical_snapshots(self):
+        m1 = self.mgr.load_manifest(self.manifest1)
+        result = self.mgr.diff(m1, m1)
+        self.assertEqual(result["added"], set())
+        self.assertEqual(result["modified"], set())
+        self.assertEqual(result["deleted"], set())
+
+    def test_restore_recreates_files(self):
+        dest = self.test_dir / "restored"
+        m1 = self.mgr.load_manifest(self.manifest1)
+        self.mgr.restore(m1, self.store / "blobs", dest)
+        self.assertTrue((dest / "a.txt").exists())
+        self.assertTrue((dest / "b.txt").exists())
+        self.assertEqual((dest / "a.txt").read_text(), "alpha")
+
+    def test_verify_passes_on_valid_snapshot(self):
+        from core.snapshot import verify_signature
+        sig_path = Path(str(self.manifest1) + ".sig")
+        sig = sig_path.read_text().strip()
+        data = self.manifest1.read_bytes()
+        ok = verify_signature(data, sig, self.store / "verify-key")
+        self.assertTrue(ok)
+
+    def test_verify_fails_on_corrupted_blob(self):
+        m1 = self.mgr.load_manifest(self.manifest1)
+        blob_hash = m1["files"]["a.txt"]["sha256"]
+        blob_path = self.store / "blobs" / blob_hash
+        blob_path.write_text("tampered")
+        result = self.mgr.verify(m1, self.store / "blobs")
+        self.assertFalse(result["valid"])
+        self.assertGreater(len(result["errors"]), 0)
+
+
 if __name__ == '__main__':
     unittest.main()
