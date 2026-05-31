@@ -4,6 +4,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+_CHUNK_SIZE = 65536
+
 
 def _age_binary() -> Optional[str]:
     return shutil.which("age") or shutil.which("age.exe")
@@ -34,24 +36,15 @@ def generate_identity(store_dir: Path) -> tuple[Path, Path]:
     if result.returncode != 0:
         raise RuntimeError(f"age-keygen failed: {result.stderr}")
 
-    key_output = result.stdout.strip()
     sign_key = ""
     verify_key = ""
-    for line in key_output.splitlines():
+    for line in result.stdout.splitlines():
         if line.startswith("# public key: age1"):
             verify_key = line.split(":")[-1].strip()
         elif line.startswith("AGE-SECRET-KEY-"):
             sign_key = line
-
-    if not verify_key or not sign_key:
-        result2 = subprocess.run(
-            [age_keygen],
-            capture_output=True, text=True, timeout=10
-        )
-        for line in result2.stderr.splitlines():
-            if line.startswith("# public key: age1"):
-                verify_key = line.split(":")[-1].strip()
-        sign_key = result2.stdout.strip()
+    if not sign_key or not verify_key:
+        raise RuntimeError("age-keygen output format unexpected")
 
     verify_path.write_text(verify_key + "\n")
     sign_path.write_text(sign_key + "\n")
@@ -119,14 +112,14 @@ def verify_signature(data: bytes, signature: str, verify_key_path: Path) -> bool
 
 
 def sha256_file(path: Path) -> str:
-    """Compute sha256 hex digest of file contents."""
+    """Compute SHA-256 hex digest of file contents."""
     h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(_CHUNK_SIZE), b""):
             h.update(chunk)
     return h.hexdigest()
 
 
 def sha256_bytes(data: bytes) -> str:
-    """Compute sha256 hex digest of bytes."""
+    """Compute SHA-256 hex digest of bytes."""
     return hashlib.sha256(data).hexdigest()
