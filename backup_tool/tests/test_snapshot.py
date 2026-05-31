@@ -263,5 +263,26 @@ class TestSnapshotRestoreDiffVerify(unittest.TestCase):
         self.assertGreater(len(result["errors"]), 0)
 
 
+class TestSnapshotUI(unittest.TestCase):
+    def test_pick_snapshot_returns_selected(self):
+        from unittest.mock import patch
+        import cli.snapshot_ui
+        with patch.object(cli.snapshot_ui, "questionary") as mock_q:
+            mock_q.select.return_value.ask.return_value = "  1.  2026-01-01T00:00:00      0 files  \u2014"
+            snaps = [{"id": "snap-001", "created_at": "2026-01-01T00:00:00", "file_count": 0, "total_size": 0},
+                     {"id": "snap-002", "created_at": "2026-02-01T00:00:00", "file_count": 0, "total_size": 0}]
+            result = cli.snapshot_ui.pick_snapshot(snaps, "test drive")
+            self.assertEqual(result, snaps[0])
+
+    def test_pick_snapshot_returns_none(self):
+        from unittest.mock import patch
+        import cli.snapshot_ui
+        with patch.object(cli.snapshot_ui, "questionary") as mock_q:
+            mock_q.select.return_value.ask.return_value = None
+            snaps = [{"id": "x", "created_at": "x", "file_count": 0, "total_size": 0}]
+            result = cli.snapshot_ui.pick_snapshot(snaps, "test")
+            self.assertIsNone(result)
+
+
 if __name__ == '__main__':
     unittest.main()
