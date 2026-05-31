@@ -284,5 +284,49 @@ class TestSnapshotUI(unittest.TestCase):
             self.assertIsNone(result)
 
 
+class TestSnapshotBackupIntegration(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.src = self.test_dir / "source"
+        self.src.mkdir()
+        (self.src / "f.txt").write_text("data")
+        (self.src / "g.txt").write_text("more")
+        self.drive = self.test_dir / "drive"
+        self.drive.mkdir()
+        self.store = self.drive / ".beckyup"
+        self.store.mkdir()
+        from core.snapshot import generate_identity
+        generate_identity(self.store)
+        (self.store / "blobs").mkdir()
+        (self.store / "snapshots").mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir)
+
+    def test_run_backup_creates_snapshot(self):
+        from core.backup_engine import BackupEngine
+        engine = BackupEngine()
+        engine.source_directories = [self.src]
+        engine.destination_path = self.drive
+        stats = engine.run_backup()
+        self.assertNotIn("error", stats)
+        snap_dir = self.store / "snapshots"
+        jsons = list(snap_dir.glob("*.json"))
+        sigs = list(snap_dir.glob("*.sig"))
+        self.assertGreater(len(jsons), 0)
+        self.assertEqual(len(jsons), len(sigs))
+
+    def test_run_backup_dedup_on_second_run(self):
+        from core.backup_engine import BackupEngine
+        engine = BackupEngine()
+        engine.source_directories = [self.src]
+        engine.destination_path = self.drive
+        engine.run_backup()
+        first_blob_count = len(list((self.store / "blobs").iterdir()))
+        engine.run_backup()
+        second_blob_count = len(list((self.store / "blobs").iterdir()))
+        self.assertEqual(first_blob_count, second_blob_count)
+
+
 if __name__ == '__main__':
     unittest.main()

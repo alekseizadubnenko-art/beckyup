@@ -232,47 +232,70 @@ class BackupEngine:
             return False, f"Диск {destination} не доступен для записи: {e}"
 
     def run_backup(self) -> Dict[str, Any]:
-        """Выполнение полного бэкапа всех настроенных директорий"""
+        """Выполнение полного бэкапа со снепшотами."""
         if not self.source_directories:
             self.logger.warning("Нет настроенных исходных директорий для бэкапа")
             return {"error": "No source directories configured"}
 
-        # Проверяем, что destination_path установлен (не равен Path() по умолчанию)
         if not self.destination_path or self.destination_path == Path():
             self.logger.error(f"Директория назначения не установлена: {self.destination_path}")
             return {"error": "Destination directory not set"}
 
-        # Check if destination is writeable
         ok, msg = self._check_writeable(self.destination_path)
         if not ok:
             self.logger.error(msg)
             return {"error": msg}
 
-        # Check if destination has enough space
         ok, msg = self._check_disk_space(self.destination_path, self.source_directories)
         if not ok:
             self.logger.error(msg)
             return {"error": msg}
 
-        overall_stats = {
-            "total_copied": 0,
-            "total_skipped": 0,
-            "total_errors": 0,
-            "directories": []
-        }
+        try:
+            from core.snapshot import SnapshotManager, generate_identity
+            store_dir = self.destination_path / ".beckyup"
+            (store_dir / "blobs").mkdir(parents=True, exist_ok=True)
+            (store_dir / "snapshots").mkdir(parents=True, exist_ok=True)
+            generate_identity(store_dir)
 
-        for source in self.source_directories:
-            # Создаем поддиректорию в назначении с именем исходной директории
-            dest_dir = self.destination_path / source.name
-            dir_stats = self.backup_directory(source, dest_dir)
+            mgr = SnapshotManager(store_dir)
+            all_files = []
+            total_errors = 0
 
-            overall_stats["total_copied"] += dir_stats["copied"]
-            overall_stats["total_skipped"] += dir_stats["skipped"]
-            overall_stats["total_errors"] += dir_stats["errors"]
-            overall_stats["directories"].append({
-                "source": str(source),
-                "destination": str(dest_dir),
-                "stats": dir_stats
-            })
+            for source in self.source_directories:
+                if not source.exists():
+                    self.logger.warning(f"Источник не существует: {source}")
+                    continue
 
-        return overall_stats
+                files = mgr.scan_files(source)
+                for f in files:
+                    if not self.should_backup_file(f["path"]):
+                        continue
+                    try:
+                        mgr.dedup_copy(f["path"], store_dir / "blobs")
+                    except Exception as e:
+                        total_errors += 1
+                        self.logger.error(f"Ошибка копирования {f['rel']}: {e}")
+                        continue
+                    all_files.append(f)
+
+            manifest_path = mgr.write_manifest(
+                store_dir / "snapshots",
+                all_files,
+                [str(s) for s in self.source_directories],
+                store_dir / "sign-key",
+            )
+
+            overall_stats = {
+                "total_copied": len(all_files),
+                "total_errors": total_errors,
+                "total_skipped": 0,
+                "manifest": str(manifest_path),
+                "directories": [str(s) for s in self.source_directories],
+            }
+            self.logger.info(f"Снепшот создан: {manifest_path.name}")
+            return overall_stats
+
+        except Exception as e:
+            self.logger.error(f"Ошибка снепшот-бэкапа: {e}", exc_info=True)
+            return {"error": str(e)}
